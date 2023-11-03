@@ -18,10 +18,10 @@ def train_batch(model, batch, device, optimizer, tokenizer):
     input_features = batch["input_features"].to(device)
     attention_mask = batch["attention_mask"].to(device)
     labels = batch["labels"].to(device)
-    decoder_input_ids = batch["decoder_input_ids"].to(device)
+    # decoder_input_ids = batch["decoder_input_ids"].to(device)
     decoder_attention_mask = batch["decoder_attention_mask"].to(device)
     train_outputs = model(input_features=input_features, attention_mask=attention_mask, labels=labels,
-                          decoder_input_ids=decoder_input_ids, decoder_attention_mask=decoder_attention_mask)
+                          decoder_attention_mask=decoder_attention_mask)
     train_loss = train_outputs.loss
     train_loss.backward()
     optimizer.step()
@@ -37,10 +37,10 @@ def test_batch(model, batch, device, tokenizer):
     input_features = batch["input_features"].to(device)
     attention_mask = batch["attention_mask"].to(device)
     labels = batch["labels"].to(device)
-    decoder_input_ids = batch["decoder_input_ids"].to(device)
+    # decoder_input_ids = batch["decoder_input_ids"].to(device)
     decoder_attention_mask = batch["decoder_attention_mask"].to(device)
     test_outputs = model(input_features=input_features, attention_mask=attention_mask, labels=labels,
-                         decoder_input_ids=decoder_input_ids, decoder_attention_mask=decoder_attention_mask)
+                         decoder_attention_mask=decoder_attention_mask)
     test_loss = test_outputs.loss
     predictions = torch.argmax(test_outputs.logits, dim=-1)
     wer = evaluate.load("wer")

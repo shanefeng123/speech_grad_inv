@@ -1,5 +1,7 @@
 import copy
 import time
+
+import torch.nn
 from transformers import WhisperForConditionalGeneration, WhisperFeatureExtractor, WhisperTokenizerFast
 from datasets import load_dataset
 from utils import *
@@ -35,7 +37,8 @@ dataset = dataset.remove_columns(["english_transcription", "intent_class", "lang
 train_dataset_audio = [sample["array"] for sample in dataset["audio"]]
 train_dataset_transcription = dataset["transcription"]
 train_inputs = feature_extractor(raw_speech=train_dataset_audio, sampling_rate=16000,
-                                 return_tensors="pt", return_attention_mask=True)
+                                 return_tensors="pt", return_attention_mask=True, do_normalize=True)
+
 train_text = tokenizer(train_dataset_transcription, return_tensors="pt", padding=True, truncation=True,
                        return_attention_mask=True)
 train_inputs["decoder_input_ids"] = train_text["input_ids"].clone()
@@ -61,27 +64,39 @@ for batch in train_loop:
         if param.grad is not None:
             client_grads.append(param.grad.clone())
 
-    labels = batch["labels"].clone()
+    # input_features = batch["input_features"].clone().detach().to(DEVICE)
+    labels = batch["labels"].clone().detach().to(DEVICE)
+    attention_mask = batch["attention_mask"].clone().detach().to(DEVICE)
+    decoder_attention_mask = batch["decoder_attention_mask"].clone().detach().to(DEVICE)
 
-    # client_name_grads = {}
-    # for name, param in client.named_parameters():
-    #     if param.grad is not None:
-    #         client_name_grads[name] = param.grad.clone()
+    spectrogram_lengths = []
+    for i in range(BATCH_SIZE):
+        spectrogram_lengths.append(torch.sum(attention_mask[i]).item())
 
-    # Assume the batch sequence length is known
-    # sequence_length = batch["decoder_input_ids"].shape[1]
-    # individual_lengths = []
-    # for i in range(BATCH_SIZE):
-    #     sequence = batch["decoder_input_ids"][i].tolist()
-    #     sequence = sequence[:sequence.index(tokenizer.pad_token_id) + 1]
-    #     individual_lengths.append(len(sequence))
+    transcript_lengths = []
+    for i in range(BATCH_SIZE):
+        transcript_lengths.append(torch.sum(decoder_attention_mask[i]).item())
 
-    # decoder_pos_grads = client_name_grads["model.decoder.embed_positions.weight"]
-    # decoder_pos_grads_sum = torch.sum(decoder_pos_grads, dim=1)
-    # # Locate the last non-zero position
-    # longest_length =
-
+    server.eval()
     continuous_optimizer = ContinuousOptimizer(client_grads, BATCH_SIZE, server, client, DEVICE, tokenizer, lr=0.01,
-                                               num_of_iter=2000, labels=labels, alpha=0.01)
+                                               num_of_iter=2000, labels=labels, attention_mask=attention_mask,
+                                               decoder_attention_mask=decoder_attention_mask,
+                                               spectrogram_lengths=spectrogram_lengths,
+                                               transcript_lengths=transcript_lengths, alpha=0.01)
     recovered_mel_spectrogram = continuous_optimizer.optimize()
+
+    recovered_ids = server.generate(input_features=recovered_mel_spectrogram)
+    generate_ids = server.generate(input_features=batch["input_features"].to(DEVICE))
+
+    recovered_transcript = tokenizer.batch_decode(recovered_ids, skip_special_tokens=True)
+    original_transcript = tokenizer.batch_decode(generate_ids, skip_special_tokens=True)
+
+    for i in range(BATCH_SIZE):
+        print("Original transcript: ", original_transcript[i])
+        print("Recovered transcript: ", recovered_transcript[i])
+
+    MSE = torch.nn.MSELoss()
+    mse = MSE(recovered_mel_spectrogram, batch["input_features"].to(DEVICE))
+    rmse = torch.sqrt(mse)
+    print("RMSE:", rmse)
     break
